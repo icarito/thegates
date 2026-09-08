@@ -30,6 +30,13 @@ python tools/build.py renderer
 
 `tools/build.py` wraps scons with the canonical flag combinations. Run `python tools/build.py --help` for release variants and flags (`--mac-intel`, `--no-sandbox`, `-j N`). It defaults to `-j (cpu_count - 2)` so the OS stays responsive during builds.
 
+Godot 3.6 renderer (for gates declaring `godot_version = "3.6"`, Linux only), from the repo root:
+```
+python godot3-modules/build.py
+```
+
+`godot3/` is pristine upstream Godot 3.6.3; the module is built into it out of tree. See `docs/Godot 3 Renderer.md`.
+
 #### 2. Run project
 
 Start compiled editor and open godot project inside **app** folder

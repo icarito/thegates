@@ -1,0 +1,9 @@
+# Godot 3 builds custom modules in place, so objects land next to the sources.
+*.o
+*.os
+*.obj
+*.pyc
+.sconsign.dblite
+the_gates/zmq/
+the_gates/flingfd/
+tests/testgate/www/
