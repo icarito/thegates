@@ -12,6 +12,8 @@ thegates/
 ├── LICENSE
 ├── screenshots/         ← screenshots used in the parent README
 ├── godot/               ← Godot fork (submodule of upstream Godot Engine)
+├── godot3/              ← Upstream Godot 3.6.3, unmodified (submodule) — see [[Godot 3 Renderer]]
+├── godot3-modules/      ← the_gates as an out-of-tree module for godot3/, plus its build.py
 ├── app/                 ← The launcher's Godot project (the browser UI itself)
 ├── deployment/          ← Export / package / upload scripts (see [[Release and Deployment]])
 └── docs/                ← This vault
@@ -35,6 +37,24 @@ godot/
 ├── thirdparty/          ← upstream
 └── bin/                 ← built binaries land here (multiple variants — see [[Build System]])
 ```
+
+## `godot3/` and `godot3-modules/` — the Godot 3 renderer
+
+`godot3/` is upstream Godot 3.6.3 with **no** patches — Godot 3 supports
+out-of-tree modules, so everything of ours lives beside it:
+
+```
+godot3-modules/
+├── build.py             ← scons entry point (`python godot3-modules/build.py`)
+├── tests/               ← standalone checks that need no engine build
+└── the_gates/           ← the module, built via `custom_modules=`
+    ├── ipc/             ← zmq, Command, CommandSync, InputSync, input translation
+    └── renderer/        ← GL external texture, renderer lifecycle
+```
+
+libzmq / cppzmq / flingfd are compiled out of `godot/thirdparty/` rather than
+vendored twice, so `godot3-modules/` depends on the `godot/` submodule being
+checked out. See [[Godot 3 Renderer]].
 
 ## `app/` — the browser project
 

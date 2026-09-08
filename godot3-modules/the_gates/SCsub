@@ -1,0 +1,119 @@
+#!/usr/bin/env python
+
+import os
+
+Import("env")
+Import("env_modules")
+
+env_tg = env_modules.Clone()
+
+# cppzmq needs C++17 for std::optional-based recv results; Godot 3.6 builds
+# the rest of the engine at gnu++14 and the two coexist per translation unit.
+env_tg.Append(CXXFLAGS=["-std=gnu++17"])
+env_tg.Append(CPPDEFINES=["TG_RENDERER"])
+
+# libzmq, cppzmq and flingfd are vendored in the Godot 4.5 fork. Both engines
+# must speak the same wire protocol, so the Godot 3 renderer builds the same
+# sources rather than vendoring a second copy that could drift.
+MODULE_DIR = Dir(".").srcnode().abspath
+REPO_ROOT = os.path.normpath(os.path.join(MODULE_DIR, "..", ".."))
+THIRDPARTY = os.path.join(REPO_ROOT, "godot", "thirdparty")
+
+if not os.path.isdir(THIRDPARTY):
+    raise SystemExit(
+        "the_gates: %s not found. Run `git submodule update --init godot` first." % THIRDPARTY
+    )
+
+zmq_dir = os.path.join(THIRDPARTY, "libzmq")
+cppzmq_dir = os.path.join(THIRDPARTY, "cppzmq")
+flingfd_dir = os.path.join(THIRDPARTY, "flingfd")
+
+env_tg.Prepend(CPPPATH=[cppzmq_dir, os.path.join(zmq_dir, "include"), flingfd_dir])
+env_tg.Append(CPPDEFINES=["ZMQ_STATIC"])
+
+# Drop WebSocket transports — they pull in gnutls/openssl and we only use ipc://.
+zmq_sources_skip = {
+    "ws_address.cpp",
+    "ws_connecter.cpp",
+    "ws_decoder.cpp",
+    "ws_encoder.cpp",
+    "ws_engine.cpp",
+    "ws_listener.cpp",
+    "wss_address.cpp",
+    "wss_engine.cpp",
+}
+
+env_zmq = env_tg.Clone()
+env_zmq.disable_warnings()
+env_zmq.Prepend(
+    CPPPATH=[
+        os.path.join(zmq_dir, "src"),
+        os.path.join(zmq_dir, "external", "sha1"),
+    ]
+)
+# Upstream libzmq generates platform.hpp via autoconf or cmake; we vendor the
+# source without that step. These macros are what cmake would emit for a Linux
+# glibc target with epoll + AF_UNIX + eventfd.
+env_zmq.Append(
+    CPPDEFINES=[
+        "ZMQ_USE_BUILTIN_SHA1",
+        "ZMQ_HAVE_LINUX",
+        ("ZMQ_CACHELINE_SIZE", 64),
+        "ZMQ_IOTHREAD_POLLER_USE_EPOLL",
+        "ZMQ_POLL_BASED_ON_POLL",
+        "ZMQ_USE_CV_IMPL_PTHREADS",
+        "ZMQ_HAVE_IPC",
+        "ZMQ_HAVE_STRUCT_SOCKADDR_UN",
+        "ZMQ_HAVE_EVENTFD",
+        "ZMQ_HAVE_EVENTFD_CLOEXEC",
+        "ZMQ_HAVE_O_CLOEXEC",
+        "ZMQ_HAVE_SOCK_CLOEXEC",
+        "ZMQ_HAVE_SO_KEEPALIVE",
+        "ZMQ_HAVE_TCP_KEEPCNT",
+        "ZMQ_HAVE_TCP_KEEPIDLE",
+        "ZMQ_HAVE_TCP_KEEPINTVL",
+        "ZMQ_HAVE_UIO",
+        "ZMQ_HAVE_IFADDRS",
+        "ZMQ_HAVE_NOEXCEPT",
+        "ZMQ_HAVE_PTHREAD_SETNAME_2",
+        "ZMQ_HAVE_PTHREAD_SET_AFFINITY",
+        "ZMQ_HAVE_STRLCPY",
+        ("HAVE_POSIX_MEMALIGN", 1),
+        "HAVE_STRNLEN",
+        "HAVE_CLOCK_GETTIME",
+        "HAVE_MKDTEMP",
+        "HAVE_FORK",
+        "HAVE_ACCEPT4",
+        "_GNU_SOURCE",
+    ]
+)
+
+# Sources live outside the SCons source root, so each object needs an explicit
+# target under the module's build dir; a bare source path would drop the .o
+# next to the vendored source in the godot/ submodule.
+thirdparty_obj = []
+for src in sorted(Glob(os.path.join(zmq_dir, "src", "*.cpp"), strings=True)):
+    name = os.path.basename(src)
+    if name in zmq_sources_skip:
+        continue
+    thirdparty_obj.append(env_zmq.Object(target="zmq/" + name[:-4], source=src))
+
+thirdparty_obj.append(
+    env_zmq.Object(target="zmq/sha1", source=os.path.join(zmq_dir, "external", "sha1", "sha1.c"))
+)
+
+env_flingfd = env_tg.Clone()
+env_flingfd.disable_warnings()
+thirdparty_obj.append(
+    env_flingfd.Object(target="flingfd/flingfd", source=os.path.join(flingfd_dir, "flingfd.c"))
+)
+
+env.modules_sources += thirdparty_obj
+
+module_obj = []
+env_tg.add_source_files(module_obj, "*.cpp")
+env_tg.add_source_files(module_obj, "ipc/*.cpp")
+env_tg.add_source_files(module_obj, "renderer/*.cpp")
+env.modules_sources += module_obj
+
+env.Depends(module_obj, thirdparty_obj)
