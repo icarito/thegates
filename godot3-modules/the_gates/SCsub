@@ -52,41 +52,65 @@ env_zmq.Prepend(
     ]
 )
 # Upstream libzmq generates platform.hpp via autoconf or cmake; we vendor the
-# source without that step. These macros are what cmake would emit for a Linux
-# glibc target with epoll + AF_UNIX + eventfd.
-env_zmq.Append(
-    CPPDEFINES=[
-        "ZMQ_USE_BUILTIN_SHA1",
-        "ZMQ_HAVE_LINUX",
-        ("ZMQ_CACHELINE_SIZE", 64),
-        "ZMQ_IOTHREAD_POLLER_USE_EPOLL",
-        "ZMQ_POLL_BASED_ON_POLL",
-        "ZMQ_USE_CV_IMPL_PTHREADS",
-        "ZMQ_HAVE_IPC",
-        "ZMQ_HAVE_STRUCT_SOCKADDR_UN",
-        "ZMQ_HAVE_EVENTFD",
-        "ZMQ_HAVE_EVENTFD_CLOEXEC",
-        "ZMQ_HAVE_O_CLOEXEC",
-        "ZMQ_HAVE_SOCK_CLOEXEC",
-        "ZMQ_HAVE_SO_KEEPALIVE",
-        "ZMQ_HAVE_TCP_KEEPCNT",
-        "ZMQ_HAVE_TCP_KEEPIDLE",
-        "ZMQ_HAVE_TCP_KEEPINTVL",
-        "ZMQ_HAVE_UIO",
-        "ZMQ_HAVE_IFADDRS",
-        "ZMQ_HAVE_NOEXCEPT",
-        "ZMQ_HAVE_PTHREAD_SETNAME_2",
-        "ZMQ_HAVE_PTHREAD_SET_AFFINITY",
-        "ZMQ_HAVE_STRLCPY",
-        ("HAVE_POSIX_MEMALIGN", 1),
-        "HAVE_STRNLEN",
-        "HAVE_CLOCK_GETTIME",
-        "HAVE_MKDTEMP",
-        "HAVE_FORK",
-        "HAVE_ACCEPT4",
-        "_GNU_SOURCE",
-    ]
-)
+# source without that step. These macros are what cmake would emit per target,
+# and match the Godot 4.5 fork's module SCsub.
+env_zmq.Append(CPPDEFINES=["ZMQ_USE_BUILTIN_SHA1"])
+if env["platform"] == "x11":
+    env_zmq.Append(
+        CPPDEFINES=[
+            "ZMQ_HAVE_LINUX",
+            ("ZMQ_CACHELINE_SIZE", 64),
+            "ZMQ_IOTHREAD_POLLER_USE_EPOLL",
+            "ZMQ_POLL_BASED_ON_POLL",
+            "ZMQ_USE_CV_IMPL_PTHREADS",
+            "ZMQ_HAVE_IPC",
+            "ZMQ_HAVE_STRUCT_SOCKADDR_UN",
+            "ZMQ_HAVE_EVENTFD",
+            "ZMQ_HAVE_EVENTFD_CLOEXEC",
+            "ZMQ_HAVE_O_CLOEXEC",
+            "ZMQ_HAVE_SOCK_CLOEXEC",
+            "ZMQ_HAVE_SO_KEEPALIVE",
+            "ZMQ_HAVE_TCP_KEEPCNT",
+            "ZMQ_HAVE_TCP_KEEPIDLE",
+            "ZMQ_HAVE_TCP_KEEPINTVL",
+            "ZMQ_HAVE_UIO",
+            "ZMQ_HAVE_IFADDRS",
+            "ZMQ_HAVE_NOEXCEPT",
+            "ZMQ_HAVE_PTHREAD_SETNAME_2",
+            "ZMQ_HAVE_PTHREAD_SET_AFFINITY",
+            "ZMQ_HAVE_STRLCPY",
+            ("HAVE_POSIX_MEMALIGN", 1),
+            "HAVE_STRNLEN",
+            "HAVE_CLOCK_GETTIME",
+            "HAVE_MKDTEMP",
+            "HAVE_FORK",
+            "HAVE_ACCEPT4",
+            "_GNU_SOURCE",
+        ]
+    )
+elif env["platform"] == "osx":
+    env_zmq.Append(
+        CPPDEFINES=[
+            "ZMQ_HAVE_OSX",
+            ("ZMQ_CACHELINE_SIZE", 64),
+            "ZMQ_HAVE_STRLCPY",
+            "ZMQ_IOTHREAD_POLLER_USE_KQUEUE",
+            "ZMQ_POLL_BASED_ON_POLL",
+            "ZMQ_USE_CV_IMPL_PTHREADS",
+            "ZMQ_HAVE_IPC",
+            "ZMQ_HAVE_STRUCT_SOCKADDR_UN",
+            "ZMQ_HAVE_UIO",
+            "ZMQ_HAVE_IFADDRS",
+            "ZMQ_HAVE_KQUEUE",
+            "ZMQ_HAVE_NOEXCEPT",
+            "HAVE_POSIX_MEMALIGN",
+            "HAVE_STRNLEN",
+            "HAVE_CLOCK_GETTIME",
+            "HAVE_MKDTEMP",
+            "HAVE_FORK",
+        ]
+    )
+    env.Append(LINKFLAGS=["-framework", "IOSurface"])
 
 # Sources live outside the SCons source root, so each object needs an explicit
 # target under the module's build dir; a bare source path would drop the .o
@@ -102,11 +126,12 @@ thirdparty_obj.append(
     env_zmq.Object(target="zmq/sha1", source=os.path.join(zmq_dir, "external", "sha1", "sha1.c"))
 )
 
-env_flingfd = env_tg.Clone()
-env_flingfd.disable_warnings()
-thirdparty_obj.append(
-    env_flingfd.Object(target="flingfd/flingfd", source=os.path.join(flingfd_dir, "flingfd.c"))
-)
+if env["platform"] == "x11":
+    env_flingfd = env_tg.Clone()
+    env_flingfd.disable_warnings()
+    thirdparty_obj.append(
+        env_flingfd.Object(target="flingfd/flingfd", source=os.path.join(flingfd_dir, "flingfd.c"))
+    )
 
 env.modules_sources += thirdparty_obj
 

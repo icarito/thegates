@@ -2,9 +2,13 @@
 
 #include "core/os/os.h"
 
-#include <stdio.h>
-
 #include "zmq.hpp"
+
+#ifdef OSX_ENABLED
+#include <crt_externs.h>
+#else
+#include <stdio.h>
+#endif
 
 zmq::context_t &tg_zmq_context() {
 	static zmq::context_t s_ctx;
@@ -17,6 +21,17 @@ void tg_zmq_shutdown() {
 
 namespace {
 
+#ifdef OSX_ENABLED
+Vector<String> read_process_argv() {
+	Vector<String> argv;
+	const int argc = *_NSGetArgc();
+	char **raw_argv = *_NSGetArgv();
+	for (int i = 0; i < argc; i++) {
+		argv.push_back(String::utf8(raw_argv[i]));
+	}
+	return argv;
+}
+#else
 // The kernel's copy of argv, NUL-separated.
 Vector<String> read_process_argv() {
 	Vector<String> argv;
@@ -37,6 +52,7 @@ Vector<String> read_process_argv() {
 	fclose(f);
 	return argv;
 }
+#endif
 
 } // namespace
 

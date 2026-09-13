@@ -16,10 +16,11 @@ namespace {
 
 const uint64_t HEARTBEAT_INTERVAL_MSEC = 1000;
 
-// RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM in the Godot 4 launcher. Godot 3
-// has no RenderingDevice, so the value is sent as the plain int the launcher's
+// RenderingDevice::DATA_FORMAT_* in the Godot 4 launcher. Godot 3 has no
+// RenderingDevice, so the values are sent as the plain ints the launcher's
 // RenderResult.set_texture_format matches on.
 const int DATA_FORMAT_R8G8B8A8_UNORM = 36;
+const int DATA_FORMAT_B8G8R8A8_UNORM = 43;
 
 TGRendererLifecycle *singleton = nullptr;
 
@@ -52,7 +53,7 @@ bool TGRendererLifecycle::engage() {
 	}
 
 	Array format_arg;
-	format_arg.append(DATA_FORMAT_R8G8B8A8_UNORM);
+	format_arg.append(ext_texture->is_bgra() ? DATA_FORMAT_B8G8R8A8_UNORM : DATA_FORMAT_R8G8B8A8_UNORM);
 	command_sync->send_command("ext_texture_format", format_arg);
 
 	input_sync = memnew(InputSync);

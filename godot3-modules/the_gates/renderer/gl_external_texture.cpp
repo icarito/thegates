@@ -5,19 +5,35 @@
 #include "core/print_string.h"
 #include "core/variant.h"
 
-#include "flingfd.h"
 #include "zmq.hpp"
 
-#include <unistd.h>
-
 #include GLES3_INCLUDE_H
+
+#ifdef OSX_ENABLED
+#include <IOSurface/IOSurface.h>
+
+// Declared rather than pulling <OpenGL/OpenGL.h>, whose gltypes.h redefines the
+// GL types glad already provides.
+extern "C" void *CGLGetCurrentContext(void);
+extern "C" int CGLTexImageIOSurface2D(void *ctx, GLenum target, GLenum internal_format, GLsizei width, GLsizei height,
+		GLenum format, GLenum type, IOSurfaceRef io_surface, GLuint plane);
+#else
+#include "flingfd.h"
+
+#include <unistd.h>
 
 // Declared rather than pulling <GL/glx.h>, which redefines the GL types glad
 // already provides.
 extern "C" void *glXGetProcAddressARB(const unsigned char *procName);
+#endif
 
 namespace {
 
+#ifdef OSX_ENABLED
+// kCVPixelFormatType_32BGRA and kCVPixelFormatType_32RGBA.
+const OSType IOSURFACE_PIXEL_FORMAT_BGRA = 0x42475241;
+const OSType IOSURFACE_PIXEL_FORMAT_RGBA = 0x52474241;
+#else
 // GL_EXT_memory_object / GL_EXT_memory_object_fd. Not in Godot 3's glad.
 const GLenum GL_HANDLE_TYPE_OPAQUE_FD = 0x9586;
 const GLenum GL_DEDICATED_MEMORY_OBJECT = 0x9581;
@@ -53,9 +69,52 @@ bool load_memory_object_extension() {
 			gl_import_memory_fd != nullptr && gl_tex_storage_mem_2d != nullptr &&
 			gl_delete_memory_objects != nullptr;
 }
+#endif
 
 } // namespace
 
+#ifdef OSX_ENABLED
+bool TGGLExternalTexture::recv_filehandle(const String &p_path) {
+	zmq::socket_t sock(tg_zmq_context(), zmq::socket_type::pair);
+	sock.bind(p_path.utf8().get_data());
+
+	zmq::message_t msg;
+	const bool received = sock.recv(msg).has_value(); // WARNING: BLOCKING COMMAND
+	sock.close();
+	ERR_FAIL_COND_V_MSG(!received || msg.size() != sizeof(uint32_t), false, "Receive IOSurface id failed");
+
+	uint32_t surface_id = 0;
+	memcpy(&surface_id, msg.data(), sizeof(uint32_t));
+	surface = IOSurfaceLookup(surface_id);
+	ERR_FAIL_COND_V_MSG(surface == nullptr, false, "IOSurfaceLookup failed for id " + itos(surface_id));
+
+	const OSType pixel_format = IOSurfaceGetPixelFormat((IOSurfaceRef)surface);
+	ERR_FAIL_COND_V_MSG(pixel_format != IOSURFACE_PIXEL_FORMAT_BGRA && pixel_format != IOSURFACE_PIXEL_FORMAT_RGBA, false,
+			vformat("Shared IOSurface has unsupported pixel format 0x%x", (int64_t)pixel_format));
+	bgra = pixel_format == IOSURFACE_PIXEL_FORMAT_BGRA;
+	return true;
+}
+
+bool TGGLExternalTexture::import_platform_texture() {
+	ERR_FAIL_COND_V_MSG(surface == nullptr, false, "Receive IOSurface first");
+	const IOSurfaceRef io_surface = (IOSurfaceRef)surface;
+	ERR_FAIL_COND_V_MSG((int)IOSurfaceGetWidth(io_surface) != width || (int)IOSurfaceGetHeight(io_surface) != height, false,
+			vformat("Shared IOSurface is %dx%d, expected %dx%d", (int64_t)IOSurfaceGetWidth(io_surface),
+					(int64_t)IOSurfaceGetHeight(io_surface), width, height));
+
+	// macOS GL binds an IOSurface only as a rectangle texture.
+	texture_target = GL_TEXTURE_RECTANGLE;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_RECTANGLE, texture);
+	const int cgl_error = CGLTexImageIOSurface2D(CGLGetCurrentContext(), GL_TEXTURE_RECTANGLE, GL_RGBA, width, height,
+			bgra ? GL_BGRA : GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV, io_surface, 0);
+	glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+	ERR_FAIL_COND_V_MSG(cgl_error != 0, false, "CGLTexImageIOSurface2D failed with CGL error " + itos(cgl_error));
+
+	print_line(vformat("[EXT-TEXTURE] imported %dx%d IOSurface (%s)", width, height, bgra ? "BGRA" : "RGBA"));
+	return true;
+}
+#else
 bool TGGLExternalTexture::recv_filehandle(const String &p_path) {
 	filehandle = flingfd_simple_recv(p_path.utf8().get_data()); // WARNING: BLOCKING COMMAND
 	ERR_FAIL_COND_V_MSG(filehandle < 0, false, "Receive filehandle failed");
@@ -71,16 +130,13 @@ bool TGGLExternalTexture::recv_filehandle(const String &p_path) {
 	return true;
 }
 
-bool TGGLExternalTexture::import(int p_width, int p_height) {
+bool TGGLExternalTexture::import_platform_texture() {
 	ERR_FAIL_COND_V_MSG(filehandle < 0, false, "Receive filehandle first");
 	ERR_FAIL_COND_V_MSG(alloc_size == 0, false, "Receive allocation size first");
 	ERR_FAIL_COND_V_MSG(!load_memory_object_extension(), false,
 			"GL_EXT_memory_object_fd is unavailable; this GPU driver cannot import the launcher's Vulkan allocation. "
 			"Mesa has exposed it since 17.3 (2017) and the NVIDIA proprietary driver since R515 (2022), "
 			"so the driver here is older than either, or the context is indirect");
-
-	width = p_width;
-	height = p_height;
 
 	gl_create_memory_objects(1, &memory_object);
 
@@ -93,6 +149,7 @@ bool TGGLExternalTexture::import(int p_width, int p_height) {
 	gl_import_memory_fd(memory_object, (GLuint64)alloc_size, GL_HANDLE_TYPE_OPAQUE_FD, (GLint)filehandle);
 	filehandle = -1;
 
+	texture_target = GL_TEXTURE_2D;
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
 	gl_tex_storage_mem_2d(GL_TEXTURE_2D, 1, GL_RGBA8, width, height, memory_object, 0);
@@ -102,19 +159,31 @@ bool TGGLExternalTexture::import(int p_width, int p_height) {
 	ERR_FAIL_COND_V_MSG(err != GL_NO_ERROR, false,
 			"Importing the shared allocation failed with GL error " + itos(err));
 
+	print_line(vformat("[EXT-TEXTURE] imported %dx%d from %d bytes of shared Vulkan memory",
+			width, height, (int64_t)alloc_size));
+	return true;
+}
+#endif
+
+bool TGGLExternalTexture::import(int p_width, int p_height) {
+	width = p_width;
+	height = p_height;
+
+	if (!import_platform_texture()) {
+		return false;
+	}
+
 	glGenFramebuffers(1, &read_fbo);
 	glGenFramebuffers(1, &draw_fbo);
 
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fbo);
-	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture_target, texture, 0);
 	const GLenum status = glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 	ERR_FAIL_COND_V_MSG(status != GL_FRAMEBUFFER_COMPLETE, false,
 			"Shared texture is not framebuffer-complete, status " + itos(status));
 
 	imported = true;
-	print_line(vformat("[EXT-TEXTURE] imported %dx%d from %d bytes of shared Vulkan memory",
-			width, height, (int64_t)alloc_size));
 	return true;
 }
 
@@ -149,10 +218,17 @@ void TGGLExternalTexture::close() {
 		glDeleteTextures(1, &texture);
 		texture = 0;
 	}
+#ifdef OSX_ENABLED
+	if (surface != nullptr) {
+		CFRelease((IOSurfaceRef)surface);
+		surface = nullptr;
+	}
+#else
 	if (memory_object != 0 && gl_delete_memory_objects != nullptr) {
 		gl_delete_memory_objects(1, &memory_object);
 		memory_object = 0;
 	}
+#endif
 	imported = false;
 }
 

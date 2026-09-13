@@ -1,7 +1,7 @@
 def can_build(env, platform):
-    # The renderer imports the launcher's Vulkan allocation through
-    # GL_EXT_memory_object_fd, which only exists on the X11/GL backend.
-    return platform == "x11"
+    # The renderer adopts the launcher's shared image through the desktop GL
+    # interop each platform offers: GL_EXT_memory_object_fd on X11, IOSurface on macOS.
+    return platform in ("x11", "osx")
 
 
 def configure(env):

@@ -9,7 +9,7 @@ upstream **Godot 3.6.3** instead of the [[Custom Godot Fork]]. It speaks the
 same IPC protocol as the 4.x renderers, so the launcher barely changes — see
 [[Two-Process Model]] for the protocol itself.
 
-Linux/X11 only today. See § Gaps for what a Godot 3 gate still cannot do.
+Linux/X11 and macOS; no Windows yet. See § Gaps for what a Godot 3 gate still cannot do.
 
 ## Why a second engine at all
 
@@ -115,9 +115,8 @@ import, kills the renderer rather than leaving the gate blank.
 
 ### GPU driver support
 
-`GL_EXT_memory_object_fd` is a POSIX-handle extension: its Windows sibling is
-`GL_EXT_memory_object_win32`, and macOS is out of scope regardless because this
-renderer targets Linux/X11. The question is therefore which Linux GPU stacks
+`GL_EXT_memory_object_fd` is a POSIX-handle extension, used on Linux only; macOS
+takes the IOSurface path below. The question is therefore which Linux GPU stacks
 expose it, and the answer is most of them:
 
 | Stack | Since | Notes |
@@ -132,6 +131,28 @@ unsupported driver is a printed reason, not a blank gate. If a driver without
 the extension ever matters, a CPU-side fallback (blit to PBO, read, upload)
 would keep the wire format unchanged at the cost of a round trip per frame;
 nothing here depends on that today.
+
+### macOS: IOSurface instead of a memory object
+
+macOS GL has no `EXT_external_objects` at all, but it does not need one. The
+launcher's MoltenVK exports the image as an `IOSurface` and sends its
+`IOSurfaceGetID` over a one-shot zmq PAIR the renderer binds at
+`ipc:///tmp/external_texture` — the same exchange the 4.x renderer uses.
+`IOSurfaceLookup` turns the id back into the surface, and
+`CGLTexImageIOSurface2D` binds it to a `GL_TEXTURE_RECTANGLE`, the only target
+macOS GL accepts for a surface. From there the draw FBO and the blit are the
+Linux ones.
+
+Two things differ. The size comes with the surface (`IOSurfaceGetWidth` /
+`IOSurfaceGetHeight`, checked against `--resolution`), so there is no
+allocation size to recover. And the surface declares its own channel order:
+the renderer uploads with `GL_BGRA` or `GL_RGBA` to match
+`IOSurfaceGetPixelFormat` and reports the matching `ext_texture_format`, which
+`RenderResult` already turns into a channel swap.
+
+`argv` comes from `_NSGetArgv()`, since there is no `/proc/self/cmdline`.
+Godot 3's `set_window_size` is a no-op under `--no-window` on macOS, so the
+window keeps the size `--resolution` gave it at creation.
 
 ### Why `--no-window` matters beyond hiding the window
 
@@ -176,6 +197,7 @@ build; run it after touching the table.
 python godot3-modules/build.py                  # dev renderer
 python godot3-modules/build.py renderer3-release
 python godot3-modules/build.py --stage-to app/renderer
+python godot3-modules/build.py --platform osx -- arch=arm64   # on a Mac
 ```
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
@@ -200,10 +222,13 @@ one look confirms the transport and both input paths.
 
 Known and deliberate, in rough order of how much they hurt:
 
-- **Linux/X11 only.** `config.py` returns false elsewhere. Windows needs
-  `GL_EXT_memory_object_win32` plus the `DuplicateHandle` dance; macOS has no GL
-  memory-object extension at all and Godot 3 has no Metal backend, so the Mac
-  path would need a different mechanism entirely.
+- **No Windows.** `config.py` returns false there. Windows needs
+  `GL_EXT_memory_object_win32`, the `path|pid` handshake for `DuplicateHandle`,
+  and an allocation size a `HANDLE` does not report.
+- **macOS is compile-verified, not run.** The IOSurface path follows the 4.x
+  renderer's exchange and Apple's documented `CGLTexImageIOSurface2D` contract,
+  but has not driven a launcher on real hardware yet. OpenGL on Apple Silicon
+  is Apple's translation layer over Metal; IOSurface binding is part of it.
 - **No sandbox.** The 4.x renderer lowers its token via `Sandbox::lower_token`
   before loading gate code. The Godot 3 renderer does not, so a 3.6 gate runs
   with the launcher's privileges. `SandboxLinux::spawn_target` applies nothing
