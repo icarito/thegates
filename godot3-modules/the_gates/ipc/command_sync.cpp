@@ -62,6 +62,8 @@ void CommandSync::poll_monitor() {
 }
 
 void CommandSync::close() {
+	// A final command such as exit_gate is still queued; give it time to reach the launcher.
+	sock.set(zmq::sockopt::linger, 500);
 	sock.close();
 	monitor_sock.close();
 }
