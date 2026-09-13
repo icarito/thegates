@@ -75,7 +75,9 @@ bool TGGLExternalTexture::import(int p_width, int p_height) {
 	ERR_FAIL_COND_V_MSG(filehandle < 0, false, "Receive filehandle first");
 	ERR_FAIL_COND_V_MSG(alloc_size == 0, false, "Receive allocation size first");
 	ERR_FAIL_COND_V_MSG(!load_memory_object_extension(), false,
-			"GL_EXT_memory_object_fd is unavailable; this GPU driver cannot import the launcher's Vulkan allocation");
+			"GL_EXT_memory_object_fd is unavailable; this GPU driver cannot import the launcher's Vulkan allocation. "
+			"Mesa has exposed it since 17.3 (2017) and the NVIDIA proprietary driver since R515 (2022), "
+			"so the driver here is older than either, or the context is indirect");
 
 	width = p_width;
 	height = p_height;

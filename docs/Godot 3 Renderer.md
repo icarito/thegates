@@ -108,6 +108,26 @@ The import only works when both processes are on the same GPU and driver stack,
 which is what `GL_EXT_memory_object_fd` is for. A missing extension, or a failed
 import, kills the renderer rather than leaving the gate blank.
 
+### GPU driver support
+
+`GL_EXT_memory_object_fd` is a POSIX-handle extension: its Windows sibling is
+`GL_EXT_memory_object_win32`, and macOS is out of scope regardless because this
+renderer targets Linux/X11. The question is therefore which Linux GPU stacks
+expose it, and the answer is most of them:
+
+| Stack | Since | Notes |
+|-------|-------|-------|
+| Mesa | 17.3, December 2017 | Shipped on i965 (Intel) and radeonsi (AMD); current Mesa exposes it on the drivers a desktop picks up, including llvmpipe (software) and zink. This is the default renderer stack on most distributions. |
+| NVIDIA proprietary | R515, June 2022 | The whole `EXT_external_objects` family (memory and semaphore, fd variants) arrived together, in the same generation the proprietary stack gained its dma-buf Vulkan export, which the launcher side needs too. |
+
+Any desktop from roughly 2023 onward covers both stacks: Ubuntu 22.04 shipped
+Mesa 23 and NVIDIA 515. The renderer probes the five entry points at startup
+and refuses to engage with a named error when any is missing, so an
+unsupported driver is a printed reason, not a blank gate. If a driver without
+the extension ever matters, a CPU-side fallback (blit to PBO, read, upload)
+would keep the wire format unchanged at the cost of a round trip per frame;
+nothing here depends on that today.
+
 ### Why `--no-window` matters beyond hiding the window
 
 The launcher sizes the shared texture from `RenderResult`, passes the same size
