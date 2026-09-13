@@ -112,11 +112,13 @@ void TGRendererLifecycle::_on_frame_post_draw() {
 		ext_texture->copy_from_texture(
 				VisualServer::get_singleton()->texture_get_texid(viewport_texture),
 				(int)source.width, (int)source.height);
+	}
 
-		if (shared_size.width > 0 && shared_size.height > 0) {
-			input_sync->set_input_scale(Vector2(source.width / (float)shared_size.width,
-					source.height / (float)shared_size.height));
-		}
+	// Viewport applies the stretch transform itself, so events must arrive in window space.
+	if (shared_size.width > 0 && shared_size.height > 0) {
+		const Size2 window = OS::get_singleton()->get_window_size();
+		input_sync->set_input_scale(Vector2(window.width / (float)shared_size.width,
+				window.height / (float)shared_size.height));
 	}
 
 	frames_seen++;

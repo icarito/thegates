@@ -143,9 +143,12 @@ and puts input in the wrong space. `--no-window` leaves the window unmapped, so
 no WM ever touches it and the render target is exactly what the launcher asked
 for.
 
-The blit and the input bridge still scale between the root viewport and the
-shared texture, because a gate's own `display/window/stretch` settings can make
-the root viewport a different size from the window on purpose.
+The blit scales the root viewport onto the shared texture, because a gate's own
+`display/window/stretch` settings can make the root viewport a different size
+from the window on purpose. Input is scaled to the *window* instead: Godot 3's
+`Viewport` applies the stretch transform to incoming events itself, so scaling
+them to the viewport as well lands every click short under `stretch/mode =
+"viewport"`.
 
 ## Input translation
 

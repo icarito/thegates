@@ -17,8 +17,7 @@ class InputSync {
 
 public:
 	void socket_connect(const String &p_address = INPUT_SYNC_ADDRESS);
-	// The launcher sends positions in shared-texture space; a window manager
-	// that resizes the renderer's window makes the viewport a different size.
+	// The launcher sends positions in shared-texture space; the engine expects window space.
 	void set_input_scale(const Vector2 &p_scale) { input_scale = p_scale; }
 	void receive_input_events();
 	void close();
