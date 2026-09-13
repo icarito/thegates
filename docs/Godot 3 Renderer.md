@@ -216,7 +216,9 @@ Known and deliberate, in rough order of how much they hurt:
 - **Gates cannot navigate.** `open_gate`, `open_link` and `highlight_button`
   reach the launcher through `SceneTree::send_command_func`, a fork addition
   Godot 3 does not have. `set_mouse_mode` *is* forwarded, by polling
-  `Input::get_mouse_mode()` each frame.
+  `Input::get_mouse_mode()` each frame, and a gate that quits sends
+  `exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
+  reaches.
 - **Assumes the default `render_thread_mode`.** `frame_post_draw` is emitted
   from whichever thread runs `VisualServerRaster::draw()`. Under Godot 3's
   default ("Safe") that is the main thread, which is what the GL blit and
