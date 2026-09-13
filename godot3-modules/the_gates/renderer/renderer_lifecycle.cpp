@@ -160,6 +160,7 @@ void TGRendererLifecycle::teardown() {
 		input_sync = nullptr;
 	}
 	if (command_sync != nullptr) {
+		command_sync->send_command("exit_gate");
 		command_sync->close();
 		memdelete(command_sync);
 		command_sync = nullptr;

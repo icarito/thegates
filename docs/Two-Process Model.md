@@ -64,6 +64,7 @@ The renderer sends commands to the launcher. The launcher's GDScript `CommandSyn
 | `open_gate` | `relative_url` | Renderer asks browser to navigate to another gate (relative to current) |
 | `open_link` | `url` | Renderer asks OS to open a non-gate URL (system browser) |
 | `highlight_button` | `button_id` | Renderer asks launcher UI to highlight a button (onboarding hint) |
+| `exit_gate` | — | The gate quit on its own (`get_tree().quit()`); the launcher returns home instead of waiting for the heartbeat to report a crash. Sent by the Godot 3 renderer; the 4.x renderer does not send it yet, and a launcher that predates it only logs the command as not implemented |
 
 All command bodies are `Command` ref-counted objects (`godot/modules/the_gates/command.h`): `name: String`, `args: Array`. Serialized as **text** Variants via `VariantWriter::write_to_string` / `VariantParser::parse` (`ipc/variant_tools.h`) — not the binary encoding. That is what lets a Godot 3 renderer share the protocol; see [[Godot 3 Renderer]].
 
