@@ -197,7 +197,7 @@ build; run it after touching the table.
 python godot3-modules/build.py                  # dev renderer
 python godot3-modules/build.py renderer3-release
 python godot3-modules/build.py --stage-to app/renderer
-python godot3-modules/build.py --platform osx -- arch=arm64   # on a Mac
+python godot3-modules/build.py renderer3 --platform osx -- arch=arm64   # on a Mac
 ```
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
