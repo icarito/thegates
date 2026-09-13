@@ -40,13 +40,14 @@ bool TGRendererLifecycle::engage() {
 	command_sync = memnew(CommandSync);
 	command_sync->socket_connect();
 
+	const String filehandle_path = tg_resolve_ipc_address(FILEHANDLE_PATH);
 	Array filehandle_arg;
-	filehandle_arg.append(tg_resolve_ipc_address(FILEHANDLE_PATH));
+	filehandle_arg.append(filehandle_path);
 	command_sync->send_command("send_filehandle", filehandle_arg);
 
 	ext_texture = memnew(TGGLExternalTexture);
 	print_line("TGGLExternalTexture: waiting for filehandle");
-	if (!ext_texture->recv_filehandle()) {
+	if (!ext_texture->recv_filehandle(filehandle_path)) {
 		return false;
 	}
 

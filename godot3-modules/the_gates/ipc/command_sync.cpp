@@ -51,6 +51,13 @@ void CommandSync::poll_monitor() {
 				print_line("ZMQ Peer connected detected");
 			}
 		}
+
+		// Each monitor event is multipart: the event frame, then the endpoint address.
+		while (msg.more()) {
+			if (!monitor_sock.recv(msg)) {
+				break;
+			}
+		}
 	}
 }
 
