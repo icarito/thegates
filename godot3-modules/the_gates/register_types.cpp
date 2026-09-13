@@ -1,11 +1,9 @@
 #include "register_types.h"
 
 #include "core/class_db.h"
-#include "ipc/command.h"
 #include "renderer/renderer_lifecycle.h"
 
 void register_the_gates_types() {
-	ClassDB::register_class<Command>();
 	ClassDB::register_class<TGRendererLifecycle>();
 
 	// Without the launcher's IPC directory this binary is a plain Godot 3

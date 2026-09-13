@@ -14,23 +14,18 @@ void CommandSync::socket_connect(const String &p_address, const String &p_monito
 	monitor_sock.connect(monitor_endpoint);
 }
 
-void CommandSync::send_command(const Ref<Command> &p_command) {
-	std::string msg_str = var_to_str(p_command).utf8().get_data();
-	zmq::message_t msg(msg_str);
-	if (!sock.send(msg, zmq::send_flags::none)) {
-		print_line("Failed to send command");
-	}
-}
-
 void CommandSync::send_command(const String &p_name) {
 	send_command(p_name, Array());
 }
 
 void CommandSync::send_command(const String &p_name, const Array &p_args) {
-	Command *command = memnew(Command);
-	command->set_name(p_name);
-	command->set_args(p_args);
-	send_command(Ref<Command>(command));
+	// A registered Command class would shadow same-named identifiers in gate scripts.
+	const String text = "Object(Command,\"name\":" + var_to_str(p_name) + ",\"args\":" + var_to_str(p_args) + ",\"script\":null)\n";
+	std::string msg_str = text.utf8().get_data();
+	zmq::message_t msg(msg_str);
+	if (!sock.send(msg, zmq::send_flags::none)) {
+		print_line("Failed to send command");
+	}
 }
 
 void CommandSync::poll_monitor() {

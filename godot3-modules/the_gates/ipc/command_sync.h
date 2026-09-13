@@ -1,7 +1,8 @@
 #ifndef TG_COMMAND_SYNC_H
 #define TG_COMMAND_SYNC_H
 
-#include "command.h"
+#include "core/array.h"
+#include "core/ustring.h"
 
 #include "zmq.hpp"
 
@@ -20,7 +21,6 @@ public:
 	void socket_connect(const String &p_address = COMMAND_SYNC_ADDRESS,
 			const String &p_monitor_endpoint = COMMAND_SYNC_MONITOR_ENDPOINT);
 
-	void send_command(const Ref<Command> &p_command);
 	void send_command(const String &p_name);
 	void send_command(const String &p_name, const Array &p_args);
 

@@ -29,17 +29,22 @@ godot3-modules/
 │   └── testgate/             ── local gate + backend stub for end-to-end runs
 └── the_gates/                ── the module, built via scons custom_modules=
     ├── config.py, SCsub
-    ├── register_types.cpp    ── registers Command, engages the renderer
+    ├── register_types.cpp    ── engages the renderer
     ├── ipc/
     │   ├── zmq_runtime        ── context, ipc:// resolver, argv reader
-    │   ├── command            ── Command (Reference): {name, args}
-    │   ├── command_sync       ── renderer -> launcher, zmq PAIR
+    │   ├── command_sync       ── renderer -> launcher, zmq PAIR; writes Command text itself
     │   ├── input_sync         ── launcher -> renderer, zmq PAIR
     │   └── input_event_compat ── Godot 4 InputEvent text -> Godot 3 InputEvent
     └── renderer/
         ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
         └── renderer_lifecycle  ── handshake, per-frame loop
 ```
+
+Every class the module registers becomes a global name in the gate's GDScript,
+and Godot 3 refuses to parse a script whose enum or class shadows one — a gate
+with `enum Command` failed to load its autoloads while `Command` was registered.
+Keep ClassDB registrations `TG`-prefixed; the wire's `Object(Command,…)` text is
+written by hand for that reason.
 
 `godot3/` stays pristine. Everything the fork does with `#ifdef TG_RENDERER`
 blocks in `main.cpp` and the display servers has an out-of-tree equivalent:
