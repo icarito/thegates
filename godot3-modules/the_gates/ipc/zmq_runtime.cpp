@@ -4,7 +4,13 @@
 
 #include "zmq.hpp"
 
-#ifdef OSX_ENABLED
+#ifdef WINDOWS_ENABLED
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
+#include <shellapi.h>
+#elif OSX_ENABLED
 #include <crt_externs.h>
 #else
 #include <stdio.h>
@@ -21,7 +27,21 @@ void tg_zmq_shutdown() {
 
 namespace {
 
-#ifdef OSX_ENABLED
+#ifdef WINDOWS_ENABLED
+Vector<String> read_process_argv() {
+	Vector<String> argv;
+	int argc = 0;
+	LPWSTR *raw_argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+	if (raw_argv == nullptr) {
+		return argv;
+	}
+	for (int i = 0; i < argc; i++) {
+		argv.push_back(String(raw_argv[i]));
+	}
+	LocalFree(raw_argv);
+	return argv;
+}
+#elif OSX_ENABLED
 Vector<String> read_process_argv() {
 	Vector<String> argv;
 	const int argc = *_NSGetArgc();

@@ -43,7 +43,12 @@ bool TGRendererLifecycle::engage() {
 
 	const String filehandle_path = tg_resolve_ipc_address(FILEHANDLE_PATH);
 	Array filehandle_arg;
+#ifdef WINDOWS_ENABLED
+	// The launcher needs this process's id to DuplicateHandle the shared image into it.
+	filehandle_arg.append(filehandle_path + "|" + itos(OS::get_singleton()->get_process_id()));
+#else
 	filehandle_arg.append(filehandle_path);
+#endif
 	command_sync->send_command("send_filehandle", filehandle_arg);
 
 	ext_texture = memnew(TGGLExternalTexture);

@@ -6,7 +6,11 @@
 
 #include "zmq.hpp"
 
+#ifdef WINDOWS_ENABLED
+static const String COMMAND_SYNC_ADDRESS("ipc://user://command_sync");
+#else
 static const String COMMAND_SYNC_ADDRESS("ipc:///tmp/command_sync");
+#endif
 static const String COMMAND_SYNC_MONITOR_ENDPOINT("inproc://command_sync_monitor");
 
 // Renderer half of the command channel: the launcher binds, we connect and

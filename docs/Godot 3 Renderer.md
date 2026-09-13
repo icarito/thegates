@@ -9,7 +9,7 @@ upstream **Godot 3.6.3** instead of the [[Custom Godot Fork]]. It speaks the
 same IPC protocol as the 4.x renderers, so the launcher barely changes — see
 [[Two-Process Model]] for the protocol itself.
 
-Linux/X11 and macOS; no Windows yet. See § Gaps for what a Godot 3 gate still cannot do.
+Linux/X11, macOS and Windows. See § Gaps for what a Godot 3 gate still cannot do.
 
 ## Why a second engine at all
 
@@ -95,11 +95,12 @@ Three things this needed that the 4.x path did not:
   `VkMemoryAllocateInfo::allocationSize`, and it is not `width * height * 4`: a
   1440x2416 RGBA8 image measures 14008320 bytes against 13916160 bytes of
   pixels, the rest being tiling alignment. Nothing in the protocol carries it —
-  but nothing has to. Vulkan hands out its external memory as a dma-buf, and
+  but nothing has to. Mesa hands out Vulkan's external memory as a dma-buf, and
   dma-buf implements `llseek` precisely so importers can size it, so
-  `recv_filehandle` reads it off the fd it was just passed. That is what keeps
-  this change self-contained: no new IPC command, and no change to the Godot 4
-  fork.
+  `recv_filehandle` reads it off the fd it was just passed. When the fd reports
+  no length, the size is measured instead (§ Measuring the allocation). Either
+  way the change stays self-contained: no new IPC command, and no change to the
+  Godot 4 fork.
 - **A source texture, not the screen.** Godot 3 emits `frame_post_draw` *after*
   `end_frame()` has already swapped buffers, so the default framebuffer's
   contents are undefined by then. The blit reads the root viewport's render
@@ -131,6 +132,37 @@ unsupported driver is a printed reason, not a blank gate. If a driver without
 the extension ever matters, a CPU-side fallback (blit to PBO, read, upload)
 would keep the wire format unchanged at the cost of a round trip per frame;
 nothing here depends on that today.
+
+### Measuring the allocation
+
+A Win32 `HANDLE` reports no size, and neither does an fd that is not a
+dma-buf. `vulkan_memory_probe` then asks Vulkan directly: it loads the system
+loader (`vulkan-1.dll` / `libvulkan.so.1`, which the launcher already requires),
+picks the physical device whose `deviceUUID` equals the GL context's
+`GL_DEVICE_UUID_EXT`, creates the image `RenderResult.create_external_texture`
+creates — 2D `R8G8B8A8_UNORM`, one mip, `TRANSFER_SRC | TRANSFER_DST`, optimal
+tiling, the platform's external handle type — and reads
+`VkMemoryRequirements::size`. The launcher allocates that image with
+`VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT`, so the requirement *is* the
+allocation. On Mesa/Intel the probe matches `llseek` byte for byte.
+
+If no Vulkan device has the GL context's UUID, the launcher and the renderer
+are on different GPUs (a hybrid laptop is the usual way), and no import could
+work; the renderer says so instead of importing at a wrong size.
+
+### Windows: `GL_EXT_memory_object_win32`
+
+The handshake is the 4.x renderer's. The renderer asks for the handle with
+`send_filehandle("<ipc://user://external_texture>|<pid>")`; the launcher
+`DuplicateHandle`s its exported `HANDLE` into that pid and sends the value as
+an `int64` over a zmq PAIR the renderer binds. `command_sync` and `input_sync`
+use the `ipc://user://` addresses too, resolved against `--tg-ipc-dir`.
+
+The import is the Linux one with `glImportMemoryWin32HandleEXT` in place of
+`glImportMemoryFdEXT` and the size from the probe. A Win32 import does not take
+ownership of the handle, so the renderer closes its duplicate afterwards. The
+extension entry points come from `wglGetProcAddress`, and `argv` from
+`CommandLineToArgvW`.
 
 ### macOS: IOSurface instead of a memory object
 
@@ -197,7 +229,8 @@ build; run it after touching the table.
 python godot3-modules/build.py                  # dev renderer
 python godot3-modules/build.py renderer3-release
 python godot3-modules/build.py --stage-to app/renderer
-python godot3-modules/build.py renderer3 --platform osx -- arch=arm64   # on a Mac
+python godot3-modules/build.py renderer3 --platform osx -- arch=arm64       # on a Mac
+python godot3-modules/build.py renderer3 --platform windows -- use_mingw=yes
 ```
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
@@ -222,13 +255,13 @@ one look confirms the transport and both input paths.
 
 Known and deliberate, in rough order of how much they hurt:
 
-- **No Windows.** `config.py` returns false there. Windows needs
-  `GL_EXT_memory_object_win32`, the `path|pid` handshake for `DuplicateHandle`,
-  and an allocation size a `HANDLE` does not report.
-- **macOS is compile-verified, not run.** The IOSurface path follows the 4.x
-  renderer's exchange and Apple's documented `CGLTexImageIOSurface2D` contract,
-  but has not driven a launcher on real hardware yet. OpenGL on Apple Silicon
-  is Apple's translation layer over Metal; IOSurface binding is part of it.
+- **macOS and Windows are compile-verified, not run.** Both follow the 4.x
+  renderer's handle exchange and the documented GL interop contracts, and the
+  size probe is verified against `llseek` on Linux, but neither has driven a
+  launcher on real hardware yet. OpenGL on Apple Silicon is Apple's translation
+  layer over Metal; IOSurface binding is part of it. On Windows the renderer
+  runs inside the launcher's Chromium sandbox without lowering its token, and
+  whether the GL driver loads under that token is untested.
 - **No sandbox.** The 4.x renderer lowers its token via `Sandbox::lower_token`
   before loading gate code. The Godot 3 renderer does not, so a 3.6 gate runs
   with the launcher's privileges. `SandboxLinux::spawn_target` applies nothing
@@ -247,12 +280,12 @@ Known and deliberate, in rough order of how much they hurt:
   default ("Safe") that is the main thread, which is what the GL blit and
   `Input::parse_input_event` both need. A gate setting it to "Separate" is
   untested.
-- **Assumes the exported fd reports its length.** Mesa exports Vulkan external
-  memory as a dma-buf, whose `llseek` returns the allocation size. A driver that
-  exports something else — the NVIDIA proprietary stack is the likely case —
-  would make `recv_filehandle` fail with a clear message rather than import at a
-  wrong size. Sending the size over IPC is the fallback if that turns up, and it
-  needs `VmaAllocationInfo::size` plumbed out of the fork's
+- **The size probe assumes the launcher's image description.** It re-creates the
+  image `RenderResult.create_external_texture` makes. Changing that texture's
+  format, usage bits or allocation flags in the launcher without updating
+  `vulkan_memory_probe.cpp` would size imports wrong on Windows and on any
+  Linux driver whose fd reports no length. Sending the size over IPC would remove
+  the coupling, and it needs `VmaAllocationInfo::size` plumbed out of the fork's
   `external_texture_create`.
 - **No GL/Vulkan semaphores.** The blit and the launcher's `texture_copy` are
   unsynchronized, exactly as the 4.x path is between its two processes.

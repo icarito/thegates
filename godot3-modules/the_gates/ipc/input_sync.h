@@ -6,7 +6,11 @@
 
 #include "zmq.hpp"
 
+#ifdef WINDOWS_ENABLED
+static const String INPUT_SYNC_ADDRESS("ipc://user://input_sync");
+#else
 static const String INPUT_SYNC_ADDRESS("ipc:///tmp/input_sync");
+#endif
 
 // Renderer half of the input channel: the launcher binds and sends Godot 4
 // InputEvents as text Variants, we connect and replay them into this engine's

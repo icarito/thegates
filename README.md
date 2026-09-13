@@ -30,7 +30,7 @@ python tools/build.py renderer
 
 `tools/build.py` wraps scons with the canonical flag combinations. Run `python tools/build.py --help` for release variants and flags (`--mac-intel`, `--no-sandbox`, `-j N`). It defaults to `-j (cpu_count - 2)` so the OS stays responsive during builds.
 
-Godot 3.6 renderer (for gates declaring `godot_version = "3.6"`, Linux and macOS), from the repo root:
+Godot 3.6 renderer (for gates declaring `godot_version = "3.6"`, Linux, macOS and Windows), from the repo root:
 ```
 python godot3-modules/build.py
 ```

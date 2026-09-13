@@ -3,26 +3,34 @@
 
 #include "core/ustring.h"
 
-#ifdef OSX_ENABLED
+#ifdef WINDOWS_ENABLED
+static const String FILEHANDLE_PATH("ipc://user://external_texture");
+#elif OSX_ENABLED
 static const String FILEHANDLE_PATH("ipc:///tmp/external_texture");
 #else
 static const String FILEHANDLE_PATH("/tmp/external_texture");
 #endif
 
 // The launcher allocates the shared image with Vulkan and exports it: an
-// opaque POSIX fd on Linux, an IOSurface on macOS (MoltenVK). Godot 3 has no
-// RenderingDevice, so this engine adopts the same image through the platform's
-// desktop GL interop and blits the root viewport into it once per frame.
+// opaque POSIX fd on Linux, an opaque Win32 HANDLE on Windows, an IOSurface on
+// macOS (MoltenVK). Godot 3 has no RenderingDevice, so this engine adopts the
+// same image through the platform's desktop GL interop and blits the root
+// viewport into it once per frame.
 //
-// On Linux, glImportMemoryFdEXT needs the exact
-// VkMemoryAllocateInfo::allocationSize. Mesa exports the memory as a dma-buf,
-// whose llseek reports that size, so the launcher does not have to send it.
+// glImportMemoryFdEXT and glImportMemoryWin32HandleEXT need the exact
+// VkMemoryAllocateInfo::allocationSize. Mesa exports Linux memory as a dma-buf,
+// whose llseek reports it; otherwise tg_vulkan_shared_image_allocation_size
+// measures it on the same GPU, so the launcher does not have to send it.
 class TGGLExternalTexture {
 #ifdef OSX_ENABLED
 	void *surface = nullptr;
 	bool bgra = false;
 #else
+#ifdef WINDOWS_ENABLED
+	void *win32_handle = nullptr;
+#else
 	int filehandle = -1;
+#endif
 	uint64_t alloc_size = 0;
 	unsigned int memory_object = 0;
 #endif

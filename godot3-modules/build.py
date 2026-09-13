@@ -55,16 +55,17 @@ def default_jobs() -> int:
 STAGED_NAMES = {
     "x11": "Renderer-godot_v%s.x86_64" % GODOT_VERSION,
     "osx": "Renderer-godot_v%s.universal" % GODOT_VERSION,
+    "windows": "Renderer-godot_v%s.exe" % GODOT_VERSION,
 }
 
 
 def default_platform() -> str:
-    return "osx" if sys.platform == "darwin" else "x11"
+    return {"darwin": "osx", "win32": "windows"}.get(sys.platform, "x11")
 
 
 def built_binary(profile: str, platform: str) -> Path | None:
     prefix = "godot.%s.%s." % (platform, "opt.debug" if profile == "renderer3" else "opt")
-    # The arch suffix differs per platform: .64 on x11, .arm64 or .x86_64 on osx.
+    # The arch suffix differs per platform: .64 on x11, .arm64 or .x86_64 on osx, .64.exe on windows.
     binaries = [p for p in (GODOT3_DIR / "bin").glob(prefix + "*") if not p.name[len(prefix) :].startswith("debug")]
     return max(binaries, key=lambda p: p.stat().st_mtime, default=None)
 
