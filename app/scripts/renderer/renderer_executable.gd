@@ -3,7 +3,7 @@ class_name RendererExecutable
 
 const DOWNLOAD_ATTEMPTS := 3
 # preview builds only: the backend does not host 3.x renderers yet
-const GODOT3_RENDERER_URL := "https://github.com/icarito/godot-box3d-3/releases/download/v0.2.6-nightly5/%s-%s"
+const GODOT3_RENDERER_URL := "https://github.com/icarito/godot-box3d-3/releases/download/v0.2.6-nightly6/%s-%s"
 
 @export var api_settings: ApiSettings
 @export var supported_godot_versions: Array[String]
