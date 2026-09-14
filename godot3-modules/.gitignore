@@ -7,3 +7,5 @@
 the_gates/zmq/
 the_gates/flingfd/
 tests/testgate/www/
+the_gates/gen/
+the_gates/chromium/

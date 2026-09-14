@@ -7,11 +7,13 @@
 
 #ifdef X11_ENABLED
 #include "../network/network_broker_engage.h"
+#include "../sandbox/lockdown_engage.h"
 #endif
 
 #include "core/os/input.h"
 #include "core/os/os.h"
 #include "core/print_string.h"
+#include "core/project_settings.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "servers/visual_server.h"
@@ -28,6 +30,19 @@ const int DATA_FORMAT_B8G8R8A8_UNORM = 43;
 
 TGRendererLifecycle *singleton = nullptr;
 
+// user:// becomes --tg-user-data-dir, the per-gate folder the launcher's sandbox lets the renderer write.
+void redirect_user_data_dir() {
+	const String gate_dir = tg_cmdline_value("--tg-user-data-dir");
+	if (gate_dir.empty()) {
+		return;
+	}
+	const String data_path = OS::get_singleton()->get_data_path();
+	ERR_FAIL_COND_MSG(!gate_dir.begins_with(data_path + "/"),
+			"--tg-user-data-dir is not under the data path " + data_path + "; user:// keeps its default location");
+	ProjectSettings::get_singleton()->set("application/config/use_custom_user_dir", true);
+	ProjectSettings::get_singleton()->set("application/config/custom_user_dir_name", gate_dir.substr(data_path.length() + 1));
+}
+
 } // namespace
 
 TGRendererLifecycle *TGRendererLifecycle::get_singleton() {
@@ -36,9 +51,10 @@ TGRendererLifecycle *TGRendererLifecycle::get_singleton() {
 
 bool TGRendererLifecycle::engage() {
 	print_line("[RENDERER-START]");
+	redirect_user_data_dir();
 
 #ifdef X11_ENABLED
-	tg_engage_network_broker();
+	const bool sandboxed = tg_engage_network_broker();
 #endif
 
 	// The launcher allocated the shared image at --resolution; matching the
@@ -64,6 +80,8 @@ bool TGRendererLifecycle::engage() {
 	if (!ext_texture->recv_filehandle(filehandle_path)) {
 		return false;
 	}
+	// Opening the allocation (and measuring it through Vulkan) needs files the lockdown forbids.
+	import_shared_texture();
 
 	Array format_arg;
 	format_arg.append(ext_texture->is_bgra() ? DATA_FORMAT_B8G8R8A8_UNORM : DATA_FORMAT_R8G8B8A8_UNORM);
@@ -71,6 +89,12 @@ bool TGRendererLifecycle::engage() {
 
 	input_sync = memnew(InputSync);
 	input_sync->socket_connect();
+
+#ifdef X11_ENABLED
+	if (sandboxed) {
+		tg_lock_down_renderer();
+	}
+#endif
 
 	VisualServer::get_singleton()->connect("frame_post_draw", this, "_on_frame_post_draw");
 	return true;

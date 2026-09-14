@@ -281,6 +281,43 @@ ports, because Godot 3's `NetSocket` interface differs (`IP_Address`, no
 Without `--tg-broker-fd` (the renderer run outside TheGates, or a launcher
 built without the sandbox) networking is left untouched.
 
+## Sandbox (Linux)
+
+When the launcher spawned the renderer sandboxed (the same `--tg-broker-fd`
+trigger as the broker), `engage` ends with `tg_lock_down_renderer`, which
+applies the 4.x fork's `tg_apply_lockdown` — `PR_SET_NO_NEW_PRIVS`, a landlock
+ruleset, capability drop, then a seccomp filter — with the policy
+`SandboxLinux::spawn_target` put in the `TG_SANDBOX_*` environment. A failure
+crashes the renderer rather than run gate code unconfined. It runs before
+`Main::start` loads any gate script.
+
+The lockdown is the fork's own code, not a copy: `lockdown.cpp` and
+`seccomp_policy.cpp` compile out of `godot/modules/the_gates/sandbox/linux`,
+and the Chromium sandbox subset out of `godot/thirdparty/chromium-sandbox`,
+with the file list read from the fork's `sandbox/linux/SCsub`. Two adaptations:
+`lockdown.cpp`'s single `String::is_empty()` call is rewritten to Godot 3's
+`empty()` at build time (the build fails if that line changes), and those
+translation units build with clang, because GCC rejects Chromium's
+`protected_memory` section attributes. Linux builds therefore need clang.
+
+Two things had to move ahead of the lockdown, since both open files it forbids:
+
+- **The shared-texture import.** `engage` imports the launcher's allocation
+  right after receiving it (measuring it through Vulkan if needed), instead of
+  on the first `frame_post_draw`.
+- **`user://`.** The fork points `OS::get_user_data_dir` at
+  `--tg-user-data-dir`, the per-gate folder landlock leaves writable, with a
+  `TG_RENDERER` patch. Godot 3 builds `user://` from
+  `application/config/custom_user_dir_name` relative to the data path, so
+  `engage` sets that setting before any script reads it. A gate without an
+  `application/config/name` keeps the default location, which the lockdown
+  denies.
+
+Under the lockdown a 3.6 test gate could not read `~/.bashrc`, write to `~/`
+or spawn processes, and could write `user://` and reach the network through
+the broker. As in the fork's policy, `/etc` stays readable and `/tmp`
+writable. Odisea ran under it with no seccomp denials.
+
 ## Building and testing
 
 ```bash
@@ -292,7 +329,8 @@ python godot3-modules/build.py renderer3 --platform windows -- use_mingw=yes
 ```
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
-libzmq.
+libzmq, the broker and lockdown sources and the Chromium sandbox. Linux builds
+also need clang.
 
 End to end, without a published 3.6 renderer on the backend:
 
@@ -320,13 +358,11 @@ Known and deliberate, in rough order of how much they hurt:
   layer over Metal; IOSurface binding is part of it. On Windows the renderer
   runs inside the launcher's Chromium sandbox without lowering its token, and
   whether the GL driver loads under that token is untested.
-- **No sandbox.** The 4.x renderer lowers its token via `Sandbox::lower_token`
-  before loading gate code. The Godot 3 renderer does not, so a 3.6 gate runs
-  with the launcher's privileges. `SandboxLinux::spawn_target` applies nothing
-  before `exec`, so the renderer is not crippled — it is simply unconfined. See
-  [[Sandboxing/Architecture]].
-- **No network broker on macOS or Windows.** There a 3.6 gate's traffic
-  still goes straight out; § Network broker covers Linux only.
+- **No sandbox or network broker on macOS or Windows.** § Sandbox and
+  § Network broker cover Linux only; elsewhere a 3.6 gate runs with the
+  launcher's privileges and its traffic goes straight out. macOS needs the
+  fork's Seatbelt profile ported, Windows the Chromium `TargetServices`
+  lowering, which the fork builds with MSVC.
 - **Assumes the default `render_thread_mode`.** `frame_post_draw` is emitted
   from whichever thread runs `VisualServerRaster::draw()`. Under Godot 3's
   default ("Safe") that is the main thread, which is what the GL blit and
