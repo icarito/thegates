@@ -1,6 +1,7 @@
 #ifndef TG_RENDERER_LIFECYCLE_H
 #define TG_RENDERER_LIFECYCLE_H
 
+#include "core/array.h"
 #include "core/math/vector2.h"
 #include "core/object.h"
 
@@ -37,6 +38,7 @@ public:
 
 	bool engage();
 	void teardown();
+	void send_command(const String &p_name, const Array &p_args);
 	void _on_frame_post_draw();
 
 	TGRendererLifecycle();

@@ -223,6 +223,32 @@ Godot 3 lacks arrives as `KEY_UNKNOWN`.
 `core/os/keyboard.h` and fails on any table entry that disagrees. It needs no
 build; run it after touching the table.
 
+## Gate commands
+
+A 4.x gate reaches the launcher with `get_tree().send_command(name, args)`, a
+method the fork adds to `SceneTree`. A Godot 3 module cannot add methods to an
+engine class, so the renderer registers an engine singleton instead, and only
+when it runs inside TheGates:
+
+```gdscript
+if Engine.has_singleton("TheGates"):
+	Engine.get_singleton("TheGates").send_command("open_gate", ["other.gate"])
+```
+
+The commands and their handling are the 4.x ones (`open_gate` relative to the
+current gate, `open_link`, `highlight_button`; see [[Two-Process Model]]).
+Going through `Engine.get_singleton` keeps the script loadable in a plain
+Godot 3 editor, where the singleton does not exist; referring to `TheGates`
+directly would not parse there.
+
+`TheGates` is a global name in the gate's GDScript, like every registered
+singleton: a gate declaring a class or autoload of that name fails to parse.
+
+Two things the renderer does on its own: `set_mouse_mode` is forwarded by
+polling `Input::get_mouse_mode()` each frame, and a gate that quits sends
+`exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
+reaches.
+
 ## Building and testing
 
 ```bash
@@ -271,12 +297,6 @@ Known and deliberate, in rough order of how much they hurt:
   ported, so a 3.6 gate's HTTP goes straight out instead of through the
   launcher's broker. The inherited `--tg-broker-fd` is ignored. See
   [[Network Isolation]].
-- **Gates cannot navigate.** `open_gate`, `open_link` and `highlight_button`
-  reach the launcher through `SceneTree::send_command_func`, a fork addition
-  Godot 3 does not have. `set_mouse_mode` *is* forwarded, by polling
-  `Input::get_mouse_mode()` each frame, and a gate that quits sends
-  `exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
-  reaches.
 - **Assumes the default `render_thread_mode`.** `frame_post_draw` is emitted
   from whichever thread runs `VisualServerRaster::draw()`. Under Godot 3's
   default ("Safe") that is the main thread, which is what the GL blit and

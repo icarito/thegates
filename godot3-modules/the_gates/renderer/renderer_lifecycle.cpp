@@ -90,6 +90,11 @@ void TGRendererLifecycle::import_shared_texture() {
 	}
 }
 
+void TGRendererLifecycle::send_command(const String &p_name, const Array &p_args) {
+	ERR_FAIL_NULL(command_sync);
+	command_sync->send_command(p_name, p_args);
+}
+
 void TGRendererLifecycle::forward_mouse_mode() {
 	const int mode = (int)Input::get_singleton()->get_mouse_mode();
 	if (mode == last_mouse_mode) {
