@@ -76,6 +76,10 @@ Vector<String> read_process_argv() {
 
 } // namespace
 
+Vector<String> tg_process_argv() {
+	return read_process_argv();
+}
+
 String tg_cmdline_value(const String &p_flag) {
 	// Godot strips the arguments it recognizes -- --resolution among them --
 	// before OS::get_cmdline_args() is populated, so the launcher's values are

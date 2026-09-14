@@ -163,6 +163,19 @@ env.modules_sources += thirdparty_obj
 module_obj = []
 env_tg.add_source_files(module_obj, "*.cpp")
 env_tg.add_source_files(module_obj, "ipc/*.cpp")
+if env["platform"] == "x11":
+    # The broker's wire protocol, framing and CIDR policy compile straight out of
+    # the 4.5 fork's module, like libzmq, so both ends share one source; the
+    # compat headers map the Godot 4 names those files use onto Godot 3's.
+    fork_network_dir = os.path.join(REPO_ROOT, "godot", "modules", "the_gates", "network")
+    compat_dir = os.path.join(MODULE_DIR, "thirdparty_compat", "godot4")
+    env_net = env_tg.Clone()
+    env_net.Prepend(CPPPATH=[compat_dir, fork_network_dir])
+    env_net.Append(CXXFLAGS=["-include", os.path.join(compat_dir, "godot4_compat.h")])
+    for name in ["broker_protocol", "fd_passing_unix", "cidr_policy"]:
+        module_obj.append(env_net.Object(target="network/fork_" + name, source=os.path.join(fork_network_dir, name + ".cpp")))
+    env_net.add_source_files(module_obj, "network/*.cpp")
+
 renderer_sources = Glob("renderer/*.cpp")
 if env["platform"] == "osx":
     # macOS binds an IOSurface and never has to measure a Vulkan allocation.

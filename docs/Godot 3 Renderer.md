@@ -35,9 +35,11 @@ godot3-modules/
     │   ├── command_sync       ── renderer -> launcher, zmq PAIR; writes Command text itself
     │   ├── input_sync         ── launcher -> renderer, zmq PAIR
     │   └── input_event_compat ── Godot 4 InputEvent text -> Godot 3 InputEvent
-    └── renderer/
-        ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
-        └── renderer_lifecycle  ── handshake, per-frame loop
+    ├── network/              ── Linux: routes sockets + DNS through the launcher's broker
+    ├── renderer/
+    │   ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
+    │   └── renderer_lifecycle  ── handshake, per-frame loop
+    └── thirdparty_compat/    ── headers that let fork and vendored sources build here
 ```
 
 Every class the module registers becomes a global name in the gate's GDScript,
@@ -249,6 +251,36 @@ polling `Input::get_mouse_mode()` each frame, and a gate that quits sends
 `exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
 reaches.
 
+## Network broker
+
+On Linux the launcher spawns every renderer through `SandboxLinux::spawn_target`,
+which runs a `NetworkBroker` thread and hands the renderer the other end of a
+socketpair as `--tg-broker-fd=<n>` (see [[Network Isolation]]). When that flag
+is present, `tg_engage_network_broker` routes the 3.6 renderer's networking
+through it, before anything else in `engage`:
+
+- `BrokeredNetSocket` becomes the engine's `NetSocket` factory through
+  `NetSocket::_create`, which Godot 3 has too. Each socket is opened by the
+  broker on first connect and arrives as an fd over `SCM_RIGHTS`, so the
+  launcher's CIDR policy decides every destination.
+- DNS goes to the broker through `TGBrokeredIP`. Godot 4's hook is a
+  `TG_RENDERER` patch in `core/io/ip.cpp`; in Godot 3, `IP`'s constructor makes
+  each instance the singleton, so an `IP` subclass created after the engine's
+  diverts `IP::resolve_hostname`. The engine's instance is restored at
+  teardown. Scripts calling the `IP` engine singleton directly still reach the
+  engine's instance.
+
+The wire protocol, framing and CIDR policy (`broker_protocol`,
+`fd_passing_unix`, `cidr_policy`) compile straight out of
+`godot/modules/the_gates/network`, so both ends share one source;
+`thirdparty_compat/godot4/` maps the Godot 4 include paths and names those
+files use onto Godot 3's. `RendererNetClient` and `BrokeredNetSocket` are
+ports, because Godot 3's `NetSocket` interface differs (`IP_Address`, no
+`get_socket_address`, `String` by value).
+
+Without `--tg-broker-fd` (the renderer run outside TheGates, or a launcher
+built without the sandbox) networking is left untouched.
+
 ## Building and testing
 
 ```bash
@@ -293,10 +325,8 @@ Known and deliberate, in rough order of how much they hurt:
   with the launcher's privileges. `SandboxLinux::spawn_target` applies nothing
   before `exec`, so the renderer is not crippled — it is simply unconfined. See
   [[Sandboxing/Architecture]].
-- **No network broker.** `RendererNetClient` / `BrokeredNetSocket` are not
-  ported, so a 3.6 gate's HTTP goes straight out instead of through the
-  launcher's broker. The inherited `--tg-broker-fd` is ignored. See
-  [[Network Isolation]].
+- **No network broker on macOS or Windows.** There a 3.6 gate's traffic
+  still goes straight out; § Network broker covers Linux only.
 - **Assumes the default `render_thread_mode`.** `frame_post_draw` is emitted
   from whichever thread runs `VisualServerRaster::draw()`. Under Godot 3's
   default ("Safe") that is the main thread, which is what the GL blit and

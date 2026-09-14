@@ -5,6 +5,10 @@
 #include "../ipc/zmq_runtime.h"
 #include "gl_external_texture.h"
 
+#ifdef X11_ENABLED
+#include "../network/network_broker_engage.h"
+#endif
+
 #include "core/os/input.h"
 #include "core/os/os.h"
 #include "core/print_string.h"
@@ -32,6 +36,10 @@ TGRendererLifecycle *TGRendererLifecycle::get_singleton() {
 
 bool TGRendererLifecycle::engage() {
 	print_line("[RENDERER-START]");
+
+#ifdef X11_ENABLED
+	tg_engage_network_broker();
+#endif
 
 	// The launcher allocated the shared image at --resolution; matching the
 	// window keeps the per-frame blit 1:1 instead of rescaling.
@@ -211,5 +219,8 @@ void tg_renderer_teardown() {
 	if (lifecycle != nullptr) {
 		memdelete(lifecycle);
 	}
+#ifdef X11_ENABLED
+	tg_disengage_network_broker();
+#endif
 	tg_zmq_shutdown();
 }
