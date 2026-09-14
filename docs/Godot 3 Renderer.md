@@ -35,9 +35,11 @@ godot3-modules/
     │   ├── command_sync       ── renderer -> launcher, zmq PAIR; writes Command text itself
     │   ├── input_sync         ── launcher -> renderer, zmq PAIR
     │   └── input_event_compat ── Godot 4 InputEvent text -> Godot 3 InputEvent
-    └── renderer/
-        ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
-        └── renderer_lifecycle  ── handshake, per-frame loop
+    ├── network/              ── Linux: routes sockets + DNS through the launcher's broker
+    ├── renderer/
+    │   ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
+    │   └── renderer_lifecycle  ── handshake, per-frame loop
+    └── thirdparty_compat/    ── headers that let fork and vendored sources build here
 ```
 
 Every class the module registers becomes a global name in the gate's GDScript,
@@ -223,6 +225,101 @@ Godot 3 lacks arrives as `KEY_UNKNOWN`.
 `core/os/keyboard.h` and fails on any table entry that disagrees. It needs no
 build; run it after touching the table.
 
+## Gate commands
+
+A 4.x gate reaches the launcher with `get_tree().send_command(name, args)`, a
+method the fork adds to `SceneTree`. A Godot 3 module cannot add methods to an
+engine class, so the renderer registers an engine singleton instead, and only
+when it runs inside TheGates:
+
+```gdscript
+if Engine.has_singleton("TheGates"):
+	Engine.get_singleton("TheGates").send_command("open_gate", ["other.gate"])
+```
+
+The commands and their handling are the 4.x ones (`open_gate` relative to the
+current gate, `open_link`, `highlight_button`; see [[Two-Process Model]]).
+Going through `Engine.get_singleton` keeps the script loadable in a plain
+Godot 3 editor, where the singleton does not exist; referring to `TheGates`
+directly would not parse there.
+
+`TheGates` is a global name in the gate's GDScript, like every registered
+singleton: a gate declaring a class or autoload of that name fails to parse.
+
+Two things the renderer does on its own: `set_mouse_mode` is forwarded by
+polling `Input::get_mouse_mode()` each frame, and a gate that quits sends
+`exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
+reaches.
+
+## Network broker
+
+On Linux the launcher spawns every renderer through `SandboxLinux::spawn_target`,
+which runs a `NetworkBroker` thread and hands the renderer the other end of a
+socketpair as `--tg-broker-fd=<n>` (see [[Network Isolation]]). When that flag
+is present, `tg_engage_network_broker` routes the 3.6 renderer's networking
+through it, before anything else in `engage`:
+
+- `BrokeredNetSocket` becomes the engine's `NetSocket` factory through
+  `NetSocket::_create`, which Godot 3 has too. Each socket is opened by the
+  broker on first connect and arrives as an fd over `SCM_RIGHTS`, so the
+  launcher's CIDR policy decides every destination.
+- DNS goes to the broker through `TGBrokeredIP`. Godot 4's hook is a
+  `TG_RENDERER` patch in `core/io/ip.cpp`; in Godot 3, `IP`'s constructor makes
+  each instance the singleton, so an `IP` subclass created after the engine's
+  diverts `IP::resolve_hostname`. The engine's instance is restored at
+  teardown. Scripts calling the `IP` engine singleton directly still reach the
+  engine's instance.
+
+The wire protocol, framing and CIDR policy (`broker_protocol`,
+`fd_passing_unix`, `cidr_policy`) compile straight out of
+`godot/modules/the_gates/network`, so both ends share one source;
+`thirdparty_compat/godot4/` maps the Godot 4 include paths and names those
+files use onto Godot 3's. `RendererNetClient` and `BrokeredNetSocket` are
+ports, because Godot 3's `NetSocket` interface differs (`IP_Address`, no
+`get_socket_address`, `String` by value).
+
+Without `--tg-broker-fd` (the renderer run outside TheGates, or a launcher
+built without the sandbox) networking is left untouched.
+
+## Sandbox (Linux)
+
+When the launcher spawned the renderer sandboxed (the same `--tg-broker-fd`
+trigger as the broker), `engage` ends with `tg_lock_down_renderer`, which
+applies the 4.x fork's `tg_apply_lockdown` — `PR_SET_NO_NEW_PRIVS`, a landlock
+ruleset, capability drop, then a seccomp filter — with the policy
+`SandboxLinux::spawn_target` put in the `TG_SANDBOX_*` environment. A failure
+crashes the renderer rather than run gate code unconfined. It runs before
+`Main::start` loads any gate script.
+
+The lockdown is the fork's own code, not a copy: `lockdown.cpp` and
+`seccomp_policy.cpp` compile out of `godot/modules/the_gates/sandbox/linux`,
+and the Chromium sandbox subset out of `godot/thirdparty/chromium-sandbox`,
+with the file list read from the fork's `sandbox/linux/SCsub`. Two adaptations:
+`lockdown.cpp`'s single `String::is_empty()` call is rewritten to Godot 3's
+`empty()` at build time (the build fails if that line changes), and those
+translation units build with clang, because GCC rejects Chromium's
+`protected_memory` section attributes. Linux builds therefore need a current
+clang: the snapshot tracks current Chromium, and clang 14 and 18 both fail on
+it where clang 22 builds it.
+
+Two things had to move ahead of the lockdown, since both open files it forbids:
+
+- **The shared-texture import.** `engage` imports the launcher's allocation
+  right after receiving it (measuring it through Vulkan if needed), instead of
+  on the first `frame_post_draw`.
+- **`user://`.** The fork points `OS::get_user_data_dir` at
+  `--tg-user-data-dir`, the per-gate folder landlock leaves writable, with a
+  `TG_RENDERER` patch. Godot 3 builds `user://` from
+  `application/config/custom_user_dir_name` relative to the data path, so
+  `engage` sets that setting before any script reads it. A gate without an
+  `application/config/name` keeps the default location, which the lockdown
+  denies.
+
+Under the lockdown a 3.6 test gate could not read `~/.bashrc`, write to `~/`
+or spawn processes, and could write `user://` and reach the network through
+the broker. As in the fork's policy, `/etc` stays readable and `/tmp`
+writable. Odisea ran under it with no seccomp denials.
+
 ## Building and testing
 
 ```bash
@@ -234,7 +331,8 @@ python godot3-modules/build.py renderer3 --platform windows -- use_mingw=yes
 ```
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
-libzmq.
+libzmq, the broker and lockdown sources and the Chromium sandbox. Linux builds
+also need a current clang (22 is known to work).
 
 End to end, without a published 3.6 renderer on the backend:
 
@@ -262,21 +360,11 @@ Known and deliberate, in rough order of how much they hurt:
   layer over Metal; IOSurface binding is part of it. On Windows the renderer
   runs inside the launcher's Chromium sandbox without lowering its token, and
   whether the GL driver loads under that token is untested.
-- **No sandbox.** The 4.x renderer lowers its token via `Sandbox::lower_token`
-  before loading gate code. The Godot 3 renderer does not, so a 3.6 gate runs
-  with the launcher's privileges. `SandboxLinux::spawn_target` applies nothing
-  before `exec`, so the renderer is not crippled — it is simply unconfined. See
-  [[Sandboxing/Architecture]].
-- **No network broker.** `RendererNetClient` / `BrokeredNetSocket` are not
-  ported, so a 3.6 gate's HTTP goes straight out instead of through the
-  launcher's broker. The inherited `--tg-broker-fd` is ignored. See
-  [[Network Isolation]].
-- **Gates cannot navigate.** `open_gate`, `open_link` and `highlight_button`
-  reach the launcher through `SceneTree::send_command_func`, a fork addition
-  Godot 3 does not have. `set_mouse_mode` *is* forwarded, by polling
-  `Input::get_mouse_mode()` each frame, and a gate that quits sends
-  `exit_gate` from `TGRendererLifecycle::teardown`, which only a clean exit
-  reaches.
+- **No sandbox or network broker on macOS or Windows.** § Sandbox and
+  § Network broker cover Linux only; elsewhere a 3.6 gate runs with the
+  launcher's privileges and its traffic goes straight out. macOS needs the
+  fork's Seatbelt profile ported, Windows the Chromium `TargetServices`
+  lowering, which the fork builds with MSVC.
 - **Assumes the default `render_thread_mode`.** `frame_post_draw` is emitted
   from whichever thread runs `VisualServerRaster::draw()`. Under Godot 3's
   default ("Safe") that is the main thread, which is what the GL blit and

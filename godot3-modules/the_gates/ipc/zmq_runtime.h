@@ -2,6 +2,7 @@
 #define TG_ZMQ_RUNTIME_H
 
 #include "core/ustring.h"
+#include "core/vector.h"
 
 namespace zmq {
 class context_t;
@@ -13,6 +14,9 @@ void tg_zmq_shutdown();
 // Value of the `--tg-ipc-dir <abs path>` launcher argument. Godot 4's fork
 // stores this in a main.cpp global; out of tree it is parsed from argv.
 String tg_cmdline_value(const String &p_flag);
+
+// The process's own argv, including the arguments Godot consumed.
+Vector<String> tg_process_argv();
 
 String tg_resolve_ipc_address(const String &p_address);
 

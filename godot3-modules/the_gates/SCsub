@@ -163,6 +163,98 @@ env.modules_sources += thirdparty_obj
 module_obj = []
 env_tg.add_source_files(module_obj, "*.cpp")
 env_tg.add_source_files(module_obj, "ipc/*.cpp")
+if env["platform"] == "x11":
+    # The broker's wire protocol, framing and CIDR policy compile straight out of
+    # the 4.5 fork's module, like libzmq, so both ends share one source; the
+    # compat headers map the Godot 4 names those files use onto Godot 3's.
+    fork_network_dir = os.path.join(REPO_ROOT, "godot", "modules", "the_gates", "network")
+    compat_dir = os.path.join(MODULE_DIR, "thirdparty_compat", "godot4")
+    env_net = env_tg.Clone()
+    env_net.Prepend(CPPPATH=[compat_dir, fork_network_dir])
+    env_net.Append(CXXFLAGS=["-include", os.path.join(compat_dir, "godot4_compat.h")])
+    for name in ["broker_protocol", "fd_passing_unix", "cidr_policy"]:
+        module_obj.append(env_net.Object(target="network/fork_" + name, source=os.path.join(fork_network_dir, name + ".cpp")))
+    env_net.add_source_files(module_obj, "network/*.cpp")
+
+    # The Linux lockdown (landlock, capability drop, seccomp) is the 4.x fork's,
+    # built from its sources and the same Chromium sandbox subset its SCsub lists,
+    # so the renderer policy cannot drift between the two engines.
+    fork_sandbox_dir = os.path.join(REPO_ROOT, "godot", "modules", "the_gates", "sandbox", "linux")
+    chromium_dir = os.path.join(THIRDPARTY, "chromium-sandbox")
+    chromium_include = [
+        os.path.join(chromium_dir, "chromium-shim"),
+        chromium_dir,
+        os.path.join(chromium_dir, "gen"),
+        os.path.join(chromium_dir, "base", "allocator", "partition_allocator", "src"),
+        os.path.join(chromium_dir, "gen", "base", "allocator", "partition_allocator", "src"),
+        os.path.join(chromium_dir, "third_party", "abseil-cpp"),
+    ]
+
+    def fork_chromium_sources():
+        import ast
+
+        wanted = ["sandbox_linux_sources", "base_sources", "chromium_shim_sources", "abseil_sources"]
+        tree = ast.parse(open(os.path.join(fork_sandbox_dir, "SCsub")).read())
+        lists = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in wanted:
+                lists[node.targets[0].id] = ast.literal_eval(node.value)
+        missing = [name for name in wanted if name not in lists]
+        if missing:
+            raise SystemExit("the_gates: %s not found in the fork's sandbox/linux/SCsub" % ", ".join(missing))
+        return [path for name in wanted for path in lists[name]]
+
+    def cxx20(environment):
+        environment["CXXFLAGS"] = [f for f in environment["CXXFLAGS"] if not str(f).startswith("-std=")]
+        environment.Append(CXXFLAGS=["-std=gnu++20"])
+
+    env_chromium = env_tg.Clone()
+    env_chromium.disable_warnings()
+    cxx20(env_chromium)
+    env_chromium.Prepend(CPPPATH=chromium_include)
+    env_chromium.Prepend(
+        CPPDEFINES=[
+            "NDEBUG",
+            "_GNU_SOURCE",
+            ("_FILE_OFFSET_BITS", 64),
+            ("_LARGEFILE_SOURCE", 1),
+            ("_LARGEFILE64_SOURCE", 1),
+            "NVALGRIND",
+            ("DYNAMIC_ANNOTATIONS_ENABLED", 0),
+            "MOZ_SANDBOX",
+            "CHROMIUM_SANDBOX_BUILD",
+        ]
+    )
+    chromium_obj = []
+    for path in fork_chromium_sources():
+        stem = os.path.splitext(path)[0].replace("/", "_")
+        chromium_obj.append(env_chromium.Object(target="chromium/" + stem, source=os.path.join(chromium_dir, path)))
+    env.modules_sources += chromium_obj
+
+    env_lockdown = env_net.Clone()
+    cxx20(env_lockdown)
+    env_lockdown.Prepend(CPPPATH=chromium_include + [fork_sandbox_dir])
+    env_lockdown.Append(CPPDEFINES=["LINUXBSD_ENABLED"])
+
+    # Godot 3's String spells is_empty() as empty(); the one call is rewritten at
+    # build time instead of keeping a copy of the lockdown policy here.
+    def godot3_lockdown(target, source, env):
+        text = open(str(source[0])).read()
+        if text.count("p_rw_dir.is_empty()") != 1:
+            raise SystemExit("the_gates: fork lockdown.cpp changed; update the Godot 3 rewrite in SCsub")
+        with open(str(target[0]), "w") as out:
+            out.write(text.replace("p_rw_dir.is_empty()", "p_rw_dir.empty()"))
+
+    # Chromium only supports clang; GCC rejects its protected_memory section attributes.
+    for chromium_env in (env_chromium, env_lockdown):
+        chromium_env["CC"] = "clang"
+        chromium_env["CXX"] = "clang++"
+
+    lockdown_cpp = env_lockdown.Command("gen/fork_lockdown.cpp", os.path.join(fork_sandbox_dir, "lockdown.cpp"), godot3_lockdown)
+    module_obj.append(env_lockdown.Object(target="sandbox/fork_lockdown", source=lockdown_cpp))
+    module_obj.append(env_lockdown.Object(target="sandbox/fork_seccomp_policy", source=os.path.join(fork_sandbox_dir, "seccomp_policy.cpp")))
+    env_lockdown.add_source_files(module_obj, "sandbox/lockdown_engage.cpp")
+
 renderer_sources = Glob("renderer/*.cpp")
 if env["platform"] == "osx":
     # macOS binds an IOSurface and never has to measure a Vulkan allocation.
