@@ -298,7 +298,8 @@ with the file list read from the fork's `sandbox/linux/SCsub`. Two adaptations:
 `lockdown.cpp`'s single `String::is_empty()` call is rewritten to Godot 3's
 `empty()` at build time (the build fails if that line changes), and those
 translation units build with clang, because GCC rejects Chromium's
-`protected_memory` section attributes. Linux builds therefore need clang.
+`protected_memory` section attributes. Linux builds therefore need clang 16 or
+newer (the snapshot's C++20 does not build with clang 14).
 
 Two things had to move ahead of the lockdown, since both open files it forbids:
 
@@ -330,7 +331,7 @@ python godot3-modules/build.py renderer3 --platform windows -- use_mingw=yes
 
 Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
 libzmq, the broker and lockdown sources and the Chromium sandbox. Linux builds
-also need clang.
+also need clang 16 or newer.
 
 End to end, without a published 3.6 renderer on the backend:
 
