@@ -55,7 +55,7 @@ func download(godot_version: String, active_session: FileDownloader.DownloadSess
 
 
 func get_download_url(godot_version: String) -> String:
-	if godot_version.begins_with("3."):
+	if godot_version.begins_with("3.") and api_settings.host_type != ApiSettings.HostType.Local:
 		return GODOT3_RENDERER_URL % [Platform.get_platform_string(), godot_version]
 	return api_settings.download_renderer % [Platform.get_platform_string(), godot_version]
 

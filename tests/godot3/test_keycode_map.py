@@ -5,19 +5,48 @@ The mapping is re-derived here from the same source of truth the C++ uses --
 the two engines' core/os/keyboard.h -- so a wrong table entry fails instead of
 silently delivering the wrong key to a gate.
 
-Run: python3 godot3-modules/tests/test_keycode_map.py
+The Godot 4 header comes from the working tree; the Godot 3 header and the
+input_event_compat source come from the `tg-3.6` branch of the same `godot/`
+submodule, so both engines stay checked in one place.
+
+Run: python3 tests/godot3/test_keycode_map.py
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-GODOT4_KEYBOARD = REPO_ROOT / "godot" / "core" / "os" / "keyboard.h"
-GODOT3_KEYBOARD = REPO_ROOT / "godot3" / "core" / "os" / "keyboard.h"
-COMPAT_SOURCE = REPO_ROOT / "godot3-modules" / "the_gates" / "ipc" / "input_event_compat.cpp"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GODOT_REPO = REPO_ROOT / "godot"
+GODOT3_BRANCH = "tg-3.6"
+
+GODOT4_KEYBOARD = GODOT_REPO / "core" / "os" / "keyboard.h"
+
+
+def branch_blob(path_in_branch: str) -> Path:
+    """Materialize a file from the tg-3.6 branch so the parsers can read it."""
+    result = subprocess.run(
+        ["git", "-C", str(GODOT_REPO), "show", "%s:%s" % (GODOT3_BRANCH, path_in_branch)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "cannot read %s from %s: %s (fetch/checkout the branch in godot/ first)"
+            % (path_in_branch, GODOT3_BRANCH, result.stderr.strip())
+        )
+    handle = tempfile.NamedTemporaryFile("w", suffix=".h" if path_in_branch.endswith(".h") else ".cpp", delete=False)
+    handle.write(result.stdout)
+    handle.close()
+    return Path(handle.name)
+
+
+GODOT3_KEYBOARD = branch_blob("core/os/keyboard.h")
+COMPAT_SOURCE = branch_blob("modules/the_gates/ipc/input_event_compat.cpp")
 
 GODOT4_SPECIAL = 1 << 22
 GODOT3_SPKEY = 1 << 24

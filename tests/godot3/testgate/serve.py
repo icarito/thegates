@@ -6,7 +6,7 @@ reach one the normal way. This stands in for the whole backend: point
 app/resources/api_settings.tres at host_type = 0 (Local) and open
 http://127.0.0.1:8000/test.gate.
 
-    python3 godot3-modules/tests/testgate/serve.py --renderer godot3/bin/godot.x11.opt.debug.64
+    python3 tests/godot3/testgate/serve.py --renderer godot/bin/godot.x11.opt.debug.renderer.64
 """
 
 from __future__ import annotations

@@ -20,26 +20,24 @@ GDScript.
 
 ## Where the code lives
 
+The 3.6 renderer is a branch of the `godot/` fork, exactly like the 4.x
+renderers: `tg-3.6`, based on upstream **Godot 3.6.3**. Nothing of ours lives
+outside the submodule.
+
 ```
-godot3/                       ── upstream Godot 3.6.3, submodule, no patches
-godot3-modules/
-├── build.py                  ── scons entry point (mirrors godot/tools/build.py)
-├── tests/
-│   ├── test_keycode_map.py   ── checks the keycode table against both engines
-│   └── testgate/             ── local gate + backend stub for end-to-end runs
-└── the_gates/                ── the module, built via scons custom_modules=
+godot/                          ── the fork; branch tg-3.6 holds the 3.6 renderer
+├── SConstruct                  ── tg_renderer option, TG_RENDERER define, .renderer suffix
+├── main/main.cpp               ── TG_RENDERER blocks, --tg-ipc-dir / --tg-user-data-dir globals
+├── thirdparty/                 ── libzmq, cppzmq, flingfd, chromium-sandbox, vulkan
+├── tools/build.py              ── renderer / renderer-release profiles
+└── modules/the_gates/
     ├── config.py, SCsub
-    ├── register_types.cpp    ── engages the renderer
-    ├── ipc/
-    │   ├── zmq_runtime        ── context, ipc:// resolver, argv reader
-    │   ├── command_sync       ── renderer -> launcher, zmq PAIR; writes Command text itself
-    │   ├── input_sync         ── launcher -> renderer, zmq PAIR
-    │   └── input_event_compat ── Godot 4 InputEvent text -> Godot 3 InputEvent
-    ├── network/              ── Linux: routes sockets + DNS through the launcher's broker
-    ├── renderer/
-    │   ├── gl_external_texture ── GL_EXT_memory_object_fd import + blit
-    │   └── renderer_lifecycle  ── handshake, per-frame loop
-    └── thirdparty_compat/    ── headers that let fork and vendored sources build here
+    ├── register_types.cpp      ── engages the renderer
+    ├── ipc/                    ── zmq_runtime, command_sync, input_sync, input_event_compat
+    ├── network/                ── Linux: broker protocol, CIDR policy, fd passing, sockets
+    ├── renderer/               ── gl_external_texture, renderer_lifecycle, vulkan_memory_probe
+    ├── sandbox/                ── Linux landlock + seccomp lockdown
+    └── thirdparty_compat/mingw ── afunix shim for libzmq under MinGW
 ```
 
 Every class the module registers becomes a global name in the gate's GDScript,
@@ -48,20 +46,24 @@ with `enum Command` failed to load its autoloads while `Command` was registered.
 Keep ClassDB registrations `TG`-prefixed; the wire's `Object(Command,…)` text is
 written by hand for that reason.
 
-`godot3/` stays pristine. Everything the fork does with `#ifdef TG_RENDERER`
-blocks in `main.cpp` and the display servers has an out-of-tree equivalent:
+Because everything is in-tree on the branch, the fork's `#ifdef TG_RENDERER`
+blocks and the module are the same code path as 4.5, with the API ported:
 
-| Fork hook (Godot 4) | Godot 3 equivalent |
+| Fork hook (Godot 4.5) | Godot 3.6 branch |
 |---|---|
 | `tg_renderer_engage` in `Main::setup2` | `register_the_gates_types()`, which `main.cpp` calls at line 1630 — after the window, GL context, VisualServer and scene types exist |
 | `tg_renderer_loop_iterate` in `Main::iteration` | `VisualServer::frame_post_draw`, emitted on the thread owning the GL context |
-| `--tg-ipc-dir` global parsed in `main.cpp` | `tg_cmdline_value()`, reading `/proc/self/cmdline` |
+| `--tg-ipc-dir` global parsed in `main.cpp` | the same global, parsed the same way; the module reads it via `extern String tg_ipc_dir_override` |
+| `--tg-user-data-dir` + `OS::get_user_data_dir` override | the same `main.cpp` global; Godot 3 builds `user://` from `application/config/custom_user_dir_name`, so `engage` sets that setting |
 | display-server window hiding | upstream's own `--no-window`, which the launcher passes for 3.x gates |
 | `tg_renderer_boot` `[RENDERER-READY]` marker | same marker, at the end of `tg_renderer_engage` |
+| landlock/seccomp in `sandbox/linux` | the same files, ported to the Godot 3 API (include guards, `String::sprintf`) |
 
-libzmq, cppzmq and flingfd are **not** vendored a second time — `SCsub` compiles
-them straight out of `godot/thirdparty/`, so the two engines cannot drift on the
-wire format.
+libzmq, cppzmq and flingfd are vendored on `tg-3.6` just as they are on
+`tg-4.5`, so the branch builds standalone. Both branches compile the same
+`sandbox/linux` and `network` sources, cherry-picked between them, which is what
+keeps the wire format and the seccomp policy from drifting.
+
 
 ## Frame transport: Vulkan export, GL import
 
@@ -221,9 +223,10 @@ identical, so everything a game normally reads survives; the shifted tail
 (SUPER, MENU, media and launch keys) goes through a lookup table, and anything
 Godot 3 lacks arrives as `KEY_UNKNOWN`.
 
-`tests/test_keycode_map.py` re-derives that mapping from both engines'
-`core/os/keyboard.h` and fails on any table entry that disagrees. It needs no
-build; run it after touching the table.
+`tests/godot3/test_keycode_map.py` re-derives that mapping from both engines'
+`core/os/keyboard.h` — the Godot 4 header from the working tree, the Godot 3 one
+from the `tg-3.6` branch — and fails on any table entry that disagrees. It needs
+no build; run it after touching the table.
 
 ## Gate commands
 
@@ -271,11 +274,10 @@ through it, before anything else in `engage`:
   engine's instance.
 
 The wire protocol, framing and CIDR policy (`broker_protocol`,
-`fd_passing_unix`, `cidr_policy`) compile straight out of
-`godot/modules/the_gates/network`, so both ends share one source;
-`thirdparty_compat/godot4/` maps the Godot 4 include paths and names those
-files use onto Godot 3's. `RendererNetClient` and `BrokeredNetSocket` are
-ports, because Godot 3's `NetSocket` interface differs (`IP_Address`, no
+`fd_passing_unix`, `cidr_policy`) live in `modules/the_gates/network` on both
+branches and are cherry-picked between them, so both ends share one source.
+`RendererNetClient` and `BrokeredNetSocket` are the Godot 3 ports of the 4.x
+classes, because Godot 3's `NetSocket` interface differs (`IP_Address`, no
 `get_socket_address`, `String` by value).
 
 Without `--tg-broker-fd` (the renderer run outside TheGates, or a launcher
@@ -291,16 +293,15 @@ ruleset, capability drop, then a seccomp filter — with the policy
 crashes the renderer rather than run gate code unconfined. It runs before
 `Main::start` loads any gate script.
 
-The lockdown is the fork's own code, not a copy: `lockdown.cpp` and
-`seccomp_policy.cpp` compile out of `godot/modules/the_gates/sandbox/linux`,
-and the Chromium sandbox subset out of `godot/thirdparty/chromium-sandbox`,
-with the file list read from the fork's `sandbox/linux/SCsub`. Two adaptations:
-`lockdown.cpp`'s single `String::is_empty()` call is rewritten to Godot 3's
-`empty()` at build time (the build fails if that line changes), and those
-translation units build with clang, because GCC rejects Chromium's
-`protected_memory` section attributes. Linux builds therefore need a current
-clang: the snapshot tracks current Chromium, and clang 14 and 18 both fail on
-it where clang 22 builds it.
+The lockdown is the fork's own code, vendored in-tree at
+`modules/the_gates/sandbox/linux`, with the Chromium sandbox subset at
+`thirdparty/chromium-sandbox`. The 4.5 sources were ported to the Godot 3 API
+(include guards, `String::sprintf` via `tg_vformat`) instead of being rewritten
+at build time, so the files and their `SCsub` list can be cherry-picked between
+the branches. Those translation units build with clang, because GCC rejects
+Chromium's `protected_memory` section attributes. Linux builds therefore need a
+current clang: the snapshot tracks current Chromium, and clang 14 and 18 both
+fail on it where clang 22 builds it.
 
 Two things had to move ahead of the lockdown, since both open files it forbids:
 
@@ -323,21 +324,22 @@ writable. Odisea ran under it with no seccomp denials.
 ## Building and testing
 
 ```bash
-python godot3-modules/build.py                  # dev renderer
-python godot3-modules/build.py renderer3-release
-python godot3-modules/build.py --stage-to app/renderer
-python godot3-modules/build.py renderer3 --platform osx -- arch=arm64       # on a Mac
-python godot3-modules/build.py renderer3 --platform windows -- use_mingw=yes
+# from godot/ on the tg-3.6 branch (or a worktree of it):
+python tools/build.py renderer
+python tools/build.py renderer-release
+python tools/build.py renderer --stage-to ../app/renderer
+python tools/build.py renderer --platform osx -- arch=arm64       # on a Mac
+python tools/build.py renderer --platform windows -- use_mingw=yes
 ```
 
-Needs both submodules: `godot3/` for the engine, `godot/` for the vendored
-libzmq, the broker and lockdown sources and the Chromium sandbox. Linux builds
-also need a current clang (22 is known to work).
+The branch is self-contained: the engine, the module, libzmq and the Chromium
+sandbox are all in the checkout. Linux builds need a current clang (22 is known
+to work).
 
 End to end, without a published 3.6 renderer on the backend:
 
 ```bash
-python3 godot3-modules/tests/testgate/serve.py --renderer godot3/bin/godot.x11.opt.debug.64
+python3 tests/godot3/testgate/serve.py --renderer godot/bin/godot.x11.opt.debug.renderer.64
 # set app/resources/api_settings.tres host_type = 0 (Local), then:
 godot/bin/godot.linuxbsd.editor.dev.x86_64.llvm --path app -- \
     --autotest --gate-url http://127.0.0.1:8000/test.gate
